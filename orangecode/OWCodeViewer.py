@@ -14,7 +14,7 @@ from AnyQt.QtWidgets import (
 
 import Orange.data
 from Orange.widgets.widget import OWWidget, Input, Output
-from Orange.widgets import gui
+from Orange.widgets import gui, settings
 #from repr import repr
 
 from Orange.data import Table,Variable,Domain,ContinuousVariable, DiscreteVariable, StringVariable
@@ -22,7 +22,6 @@ from numpy import float64
 from numpy import nan
 
 import os, math
-import code
 import itertools
 import re
 
@@ -32,7 +31,8 @@ class OWCodeViewer(OWWidget):
     icon = "icons/Code.svg"
     priority = 10
     keywords = ["source", "code", "display" ,"programming"]
-    directory = ""
+    dataset_ix = 0
+    dataset_len = -1
 
     show_configuration = False
 
@@ -44,30 +44,37 @@ class OWCodeViewer(OWWidget):
 
     want_main_area = False
 
+    settings_version = 1
+    directory = settings.Setting("")
+
     def __init__(self):
         super().__init__()
 
         # GUI
         box = gui.widgetBox(self.controlArea, "Info")
         self.infoLabel = gui.widgetLabel(box, '')
+        navPanelSection = gui.hBox(box)
+        gui.rubber(navPanelSection)
 
-        #self.display_no_source_selected()
+        self.navPreviousButton = gui.button(
+            navPanelSection, self, "<== Previous", callback=self.navigation_previous_file)
+        self.navPreviousButton.setDisabled(True)
+        self.navNextButton = gui.button(
+            navPanelSection, self, "Next ==>", callback=self.navigation_next_file)
+        self.navNextButton.setDisabled(True)
 
         self.code_editor = CodeEditorTextEdit()
         self.controlArea.layout().addWidget(self.code_editor)
 
-        self.configMoreButton = QPushButton("Configuration")
-        self.configMoreButton.setCheckable(True)
-        self.configMoreButton.clicked.connect(self.switch_configuration_visibility)
-        self.controlArea.layout().addWidget(self.configMoreButton)
+        self.configMoreButton = gui.button(
+            self.controlArea, self, "Src directory", callback=self.switch_configuration_visibility)
 
         self.configurationBox = gui.widgetBox(self.controlArea, "Configuration")
         gui.lineEdit(self.configurationBox, self, 'directory','Source Directory',callback=self.directory_changed)
         self.refresh_configuration_box()
 
-        #Test data
-        #self.directory = "C:\\Code\\samples\\juliet-test-suite\\"
-        #self.set_data(Table("orangecode/test.csv"))
+        self.source_file = ""
+        self.source_line = -1
 
     def switch_configuration_visibility(self,e):
         self.show_configuration = not(self.show_configuration)
@@ -83,13 +90,16 @@ class OWCodeViewer(OWWidget):
 
     @Inputs.data
     def set_data(self, dataset):
+        self.dataset = dataset
         if dataset is not None:
-            if(len(dataset) < 1):
-                self.display_no_source_selected()
+            self.dataset_len = len(dataset)
+            self.dataset_ix = 0
+            if self.dataset_len > 1:
+                self.navNextButton.setDisabled(False)
             else:
-                #import code
-                #code.interact(local=dict(globals(), **locals()))
-                self.process_line(dataset[0])
+                self.navNextButton.setDisabled(True)
+            self.navPreviousButton.setDisabled(True)
+            self.update_source_file()
         else:
             self.display_no_source_selected()
 
@@ -101,18 +111,11 @@ class OWCodeViewer(OWWidget):
         """
         The extraction is based on values to avoid manual configuration.
         """
-
-        self.source_file = ""
-        self.source_line = -1
-
-        #code.interact(local=locals())
-
         all_attributes_index = []
 
         #Guessing based on values
         for var in itertools.chain(line.domain.attributes,line.domain.metas):
             i = line.domain.index(var.name)
-            #print("{} -> {}".format(var.name,i))
             all_attributes_index.append(i)
 
         for attribute_index in all_attributes_index:
@@ -131,9 +134,13 @@ class OWCodeViewer(OWWidget):
                             self.source_file = val_parts[0]
                             self.source_line = int(val_parts[1])
 
-        self.update_source_file()
-
     def update_source_file(self):
+        # Update source file
+        if(self.dataset_len < 1):
+            self.display_no_source_selected()
+        else:
+            self.process_line(self.dataset[self.dataset_ix])
+        # Display
         if(self.source_file != ""):
             #Update highlighter
             filename, extension = os.path.splitext(self.source_file)
@@ -180,9 +187,28 @@ class OWCodeViewer(OWWidget):
         filename = self.source_file.split("/")[-1].split("\\")[-1]
         line = ("" if self.source_line == -1 else " ~ Line: <b>"+str(self.source_line)+"</b>")
 
-        self.infoLabel.setText("Source file: <b>{}</b> {}".format(filename,line))
-        
+        self.infoLabel.setText("Source file {}/{}: <b>{}</b> {} ".format(self.dataset_ix + 1,self.dataset_len,filename,line))
 
+    def navigation_next_file(self):
+        if self.dataset_ix == self.dataset_len -1:
+            return
+        self.dataset_ix += 1
+        self.navPreviousButton.setDisabled(False)
+        # Verify for end of dataset
+        if self.dataset_ix == self.dataset_len -1:
+            self.navNextButton.setDisabled(True)
+        self.update_source_file()
+
+    def navigation_previous_file(self):
+        if self.dataset_ix == 0:
+            return
+        self.dataset_ix -= 1
+        self.navNextButton.setDisabled(False)
+        # Verify for beginning of dataset
+        if self.dataset_ix == 0:
+            self.navPreviousButton.setDisabled(True)
+        self.update_source_file()
+        
 #For quick testing
 if __name__ == "__main__":
     from AnyQt.QtWidgets import QApplication
